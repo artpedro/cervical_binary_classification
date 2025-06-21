@@ -48,7 +48,7 @@ docker run --rm \
 
 ---
 
-## 4  Outputs
+## 4. Outputs
 
 ```
 metrics/
