@@ -165,7 +165,7 @@ def load_any(name: str, num_classes: int = 2, pretrained: bool = True):
             "tv_mobilenet_v2":       tvm.mobilenet_v2,
             "mobilenetv2_100":       tvm.mobilenet_v2,
             **{f"efficientnet_b{i}": getattr(tvm, f"efficientnet_b{i}")
-               for i in range(9)}
+               for i in range(8)} # only efficientnet-b0..b7
         }
         tv_ctor = tv_registry.get(name)
         if tv_ctor:
@@ -476,14 +476,15 @@ def main():
                 ]        
                 
             summary_rows.append(row_summary)
-            pd.DataFrame([row_summary]).to_csv(
+            cols = ["model", "best_epoch", "best_acc",
+                "best_prec", "best_rec", "best_spec",
+                "best_f1", "best_ppv", "best_npv"]
+
+            pd.DataFrame([row_summary], columns=cols).to_csv(
                 summary_path,
                 index=False,
                 mode="a",
-                header=not summary_path.exists(),    # write header once!
-                columns=["model", "best_epoch", "best_acc", "best_prec",
-                "best_rec", "best_spec", "best_f1",
-                "best_ppv", "best_npv"]
+                header=not summary_path.exists()    
             )
             
         except Exception as exc:
