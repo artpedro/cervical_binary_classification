@@ -43,10 +43,10 @@ RUNS_DIR    = Path(os.getenv("RUNS_DIR",    "/workspace/runs"))
 
 # Models to use
 TODO = {
-    #"SqueezeNet 1.1":"tv_squeezenet1_1",
-    #"MobileNet V2 1.0x":"mobilenetv2_100",
-    #"ShuffleNet V2 1.0x":"tv_shufflenet_v2_x1_0",
-    #"GhostNet 1.0x":"ghostnet_100",
+    "SqueezeNet 1.1":"tv_squeezenet1_1",
+    "MobileNet V2 1.0x":"mobilenetv2_100",
+    "ShuffleNet V2 1.0x":"tv_shufflenet_v2_x1_0",
+    "GhostNet 1.0x":"ghostnet_100",
     **{f"EfficientNet-B{i}":f"efficientnet_b{i}" for i in range(9)}
 }
 
@@ -101,11 +101,11 @@ def _adapt_head(model: nn.Module, num_classes: int = 2) -> int:
     RuntimeError
         If no Linear or Conv2d head could be located.
     """
-    # --- Fast-path for timm ------------------------------------------------
+    # --- Fast-path for timm models ----------------------------------------
     if hasattr(model, "reset_classifier"):
         old_head = model.get_classifier()
-        in_feats = getattr(old_head, "in_features",
-                           getattr(old_head, "in_channels"))
+        in_feats = old_head.in_features if hasattr(old_head, "in_features") \
+                else old_head.in_channels
         model.reset_classifier(num_classes)
         return in_feats
 
@@ -261,7 +261,7 @@ def main():
     
     print("Downloading dataset...")
     slug = "prahladmehandiratta/cervical-cancer-largest-dataset-sipakmed"
-    raw_path = kagglehub.dataset_download(slug, download_dir=str(DATA_DIR))  # downloads + unzips under ~/.cache/kagglehub/…
+    raw_path = kagglehub.dataset_download(slug)  # downloads + unzips under ~/.cache/kagglehub/…
     print("Downloaded to :", raw_path)
 
     # Move/rename
@@ -306,8 +306,10 @@ def main():
     log_file = log_path.open("w", newline="")
     log_writer = csv.writer(log_file)
     log_writer.writerow(["model", "origin", "epoch", "split",
- "loss", "acc", "prec", "rec", "spec", "f1", "ppv", "npv",
- "lr", "seconds"])
+        "loss", "acc", "prec", "rec", "spec", "f1", "ppv", "npv",
+        "lr", "seconds"]
+        )
+    log_file.flush()
 
     # Scan the SiPaKMeD dataset and build a fold-annotated DataFrame
     dataset_root = DATA_DIR / "sipakmed"
@@ -426,7 +428,21 @@ def main():
                         lr      = lr_now,
                         seconds = duration,
                     ))
-
+                    log_writer.writerow([friendly_name,
+                        origin,
+                        epoch,
+                        split,
+                        m["loss"],
+                        m["acc"],
+                        m["prec"],
+                        m["rec"],       # sensitivity
+                        m["spec"],
+                        m["f1"],
+                        m["ppv"],
+                        m["npv"],
+                        lr_now,
+                        duration])
+                    log_file.flush()
                 # checkpoint best by validation accuracy
                 if val_m["acc"] > best_val["acc"]:
                     best_val.update(epoch = epoch,
