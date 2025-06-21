@@ -1,20 +1,20 @@
 # SiPaKMeD Binary-Classifier (PyTorch + Docker)
 
 Train several CNN backbones on the **SiPaKMeD** cervical-cell dataset with a
-single, reproducible command.
+single command.
 
 ---
 
-## 1  Requirements (host)
+## 1. Requirements (host)
 
-* **Docker ≥ 20.10**
-* **NVIDIA driver**  (for GPU training)  
-* **NVIDIA Container Toolkit** (enables `docker run --gpus`)  
+* Docker ≥ 20.10
+* NVIDIA driver  (for GPU training)  
+* NVIDIA Container Toolkit (enables `docker run --gpus`)  
   *(skip the last two bullets if you will run on CPU only)*
 
 ---
 
-## 2  Build the image (one-time)
+## 2. Build the image (one-time)
 
 ```bash
 docker build -t sipak-trainer .
@@ -22,7 +22,7 @@ docker build -t sipak-trainer .
 
 ---
 
-## 3  Run
+## 3. Run
 
 ### GPU machine (recommended)
 
@@ -32,7 +32,7 @@ mkdir -p data metrics                     # persists across runs
 docker run --rm --gpus all \
   -v $PWD/data:/workspace/data \
   -v $PWD/metrics:/workspace/metrics \
-  --shm-size=1g \                         # avoids NCCL/DataLoader “bus error”
+  --shm-size=1g \
   sipak-trainer
 ```
 
@@ -52,11 +52,12 @@ docker run --rm \
 
 ```
 metrics/
-└── 2025-06-21_12-34-56/
-├── epoch_logs.csv # per-epoch metrics (train / val)
-├── summary.csv # best epoch per backbone
-└── checkpoints/
-└── efficientnet_b0_best.pt
+└── timestamp/
+    ├── epoch_logs.csv # per-epoch metrics (train / val)
+    ├── summary.csv # best epoch per backbone
+    └── checkpoints/
+        └── efficientnet_b0_best.pt
+        └── ...
 ```
 
 *The first run downloads and unpacks **SiPaKMeD** automatically; subsequent runs
