@@ -37,20 +37,31 @@ torch.backends.cudnn.deterministic = True; torch.backends.cudnn.benchmark = Fals
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Folders path
-DATA_DIR    = Path(os.getenv("DATA_DIR",    ".\\workspace\\data"))
-METRICS_DIR = Path(os.getenv("METRICS_DIR", ".\\workspace\\metrics"))
-RUNS_DIR    = Path(os.getenv("RUNS_DIR",    ".\\workspace\\runs"))
+DATA_DIR    = Path(os.getenv("DATA_DIR",    "./workspace/data"))
+METRICS_DIR = Path(os.getenv("METRICS_DIR", "./workspace/metrics"))
+RUNS_DIR    = Path(os.getenv("RUNS_DIR",    "./workspace/runs"))
+
+# Create dirs
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(METRICS_DIR, exist_ok=True)
+os.makedirs(RUNS_DIR, exist_ok=True)
 
 # Models to use
-'''
 TODO = {
-    "SqueezeNet 1.1":"tv_squeezenet1_1",
-    "MobileNet V2 1.0x":"mobilenetv2_100",
-    "ShuffleNet V2 1.0x":"tv_shufflenet_v2_x1_0",
-    "GhostNet 1.0x":"ghostnet_100",
-    **{f"EfficientNet-B{i}":f"efficientnet_b{i}" for i in range(6)}
+    #"SqueezeNet 1.1"     : "tv_squeezenet1_1",
+    #"MobileNet V2 1.0x"  : "mobilenetv2_100",
+    #"MobileNet V4 small" : "mobilenetv4_conv_small.e2400_r224_in1k",
+    #"VIT-Little"         : "vit_little_patch16_reg4_gap_256.sbb_in1k",
+    #"GhostNet V3"        : "ghostnetv3_100.in1k",
+    #"EfficientNet-B0"    : "efficientnet_b0.ra_in1k",
+    "EfficientNet-B1"   :  "efficientnet_b1.ft_in1k",
+    "EfficientNet-B2"   :  "efficientnet_b2.ra_in1k" ,
+    "EfficientNet-B3"   :  "efficientnet_b3.ra2_in1k",
+    "ShuffleNet V2 1.0x":  "tv_shufflenet_v2_x1_0",
+    #**{f"EfficientNet-B{i}":f"efficientnet_b{i}" for i in range(9)}
 }
-'''
+
+EPOCHS = 25
 
 # Dataset class
 class SipakBinaryDataset(Dataset):
@@ -89,42 +100,53 @@ def _adapt_head(model: nn.Module, num_classes: int = 2) -> int:
     Parameters
     ----------
     model : nn.Module
-        A CNN backbone (timm, torchvision, or hub-based).
+        A CNN / ViT backbone (timm, torchvision, or custom).
     num_classes : int, default=2
         Desired number of output classes.
 
     Returns
     -------
     int
-        The incoming feature dimension of the new head (i.e. `in_features`).
+        The incoming feature dimension of the new head (`in_features`).
 
     Raises
     ------
     RuntimeError
         If no Linear or Conv2d head could be located.
     """
-    # --- Fast-path for timm models ----------------------------------------
+
+    # ---------------------------------------------------------------------
+    # 1️⃣  FAST-PATH for *timm* models (ViT, EfficientNet, etc.)
+    # ---------------------------------------------------------------------
+    #   • timm exposes `reset_classifier`, which handles .head / .classifier
+    #   • restoring this block lets us adapt any timm model in one call
+    # ---------------------------------------------------------------------
     if hasattr(model, "reset_classifier"):
-        old_head = model.get_classifier()
-        in_feats = old_head.in_features if hasattr(old_head, "in_features") \
-                else old_head.in_channels
-        model.reset_classifier(num_classes)
+        old_head = model.get_classifier()         # works for both CNN & ViT
+        in_feats = getattr(old_head, "in_features", 
+                           getattr(old_head, "in_channels", None))
+        model.reset_classifier(num_classes)       # timm creates new nn.Linear
         return in_feats
 
-    # --- TorchVision or custom models -------------------------------------
-    for attr in ("classifier", "fc", "_fc"):
+    # ---------------------------------------------------------------------
+    # 2️⃣  TorchVision & custom backbones
+    # ---------------------------------------------------------------------
+    #   • Added "head" to the list so ViTs without `reset_classifier`
+    #     (or if someone deletes the fast-path) are still handled.
+    # ---------------------------------------------------------------------
+    for attr in ("head", "classifier", "fc", "_fc"):  # ← NEW: "head"
         if not hasattr(model, attr):
             continue
 
         head = getattr(model, attr)
 
-        # Simple Linear head (e.g. ResNet, DenseNet) -----------------------
+        # --- Simple Linear head (e.g. ResNet, ViT) -----------------------
         if isinstance(head, nn.Linear):
             in_feats = head.in_features
             setattr(model, attr, nn.Linear(in_feats, num_classes))
             return in_feats
 
-        # Sequential head (e.g. AlexNet, VGG) -----------------------------
+        # --- Sequential head (e.g. AlexNet, VGG) ------------------------
         if isinstance(head, nn.Sequential):
             layers = list(head.children())
 
@@ -144,9 +166,11 @@ def _adapt_head(model: nn.Module, num_classes: int = 2) -> int:
                     setattr(model, attr, nn.Sequential(*layers))
                     return in_ch
 
+    # ---------------------------------------------------------------------
+    # 3️⃣  Fallback
+    # ---------------------------------------------------------------------
     raise RuntimeError("Could not find a Linear/Conv2d classification head.")
 
-# Load any of the models expected
 def load_any(name: str, num_classes: int = 2, pretrained: bool = True):
     """
     Load a backbone by name from timm, torchvision or PyTorch Hub and adapt it
@@ -166,8 +190,6 @@ def load_any(name: str, num_classes: int = 2, pretrained: bool = True):
             "tv_shufflenet_v2_x1_0": tvm.shufflenet_v2_x1_0,
             "tv_mobilenet_v2":       tvm.mobilenet_v2,
             "mobilenetv2_100":       tvm.mobilenet_v2,
-            **{f"efficientnet_b{i}": getattr(tvm, f"efficientnet_b{i}")
-               for i in range(8)} # only efficientnet-b0..b7
         }
         tv_ctor = tv_registry.get(name)
         if tv_ctor:
@@ -236,7 +258,6 @@ def _run_epoch(dataloader: DataLoader,
     with ctx:
         for images, labels in dataloader:
             images, labels = images.to(DEVICE), labels.to(DEVICE)
-
             logits = model(images)
             loss   = criterion(logits, labels)
 
@@ -260,19 +281,20 @@ def _run_epoch(dataloader: DataLoader,
 def main():
     # Download dataset from Kaggle
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    
-    print("Downloading dataset...")
-    slug = "prahladmehandiratta/cervical-cancer-largest-dataset-sipakmed"
-    raw_path = kagglehub.dataset_download(slug)  # downloads + unzips under ~/.cache/kagglehub/…
-    print("Downloaded to :", raw_path)
-
-    # Move/rename
     final_path = DATA_DIR / "sipakmed"
-    
     if final_path.exists():
-        shutil.rmtree(final_path)
-    shutil.copytree(raw_path, final_path)
-    print("Dataset ready at:", final_path)
+        print("Dataset already exists at:", final_path)
+    else:
+        print("Downloading dataset...")
+        slug = "prahladmehandiratta/cervical-cancer-largest-dataset-sipakmed"
+        raw_path = kagglehub.dataset_download(slug, download_dir=str(DATA_DIR))  # downloads + unzips under ~/.cache/kagglehub/…
+        print("Downloaded to :", raw_path)
+
+        # Move/rename
+        if final_path.exists():
+            shutil.rmtree(final_path)
+        shutil.copytree(raw_path, final_path)
+        print("Dataset ready at:", final_path)
 
     DATA_ROOT = DATA_DIR / "sipakmed"  
     assert DATA_ROOT.exists(), f"Missing folder: {DATA_ROOT}"
@@ -288,6 +310,7 @@ def main():
 
     df_counts = pd.Series(cls_counts, name="#images").sort_index().to_frame()
     print(f"Total images found: {len(records)}")
+    print(df_counts)
     
     print("Preparing for training...")
     
@@ -301,6 +324,7 @@ def main():
     # Create a timestamped run-folder and the CSV logger
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_dir   = METRICS_DIR / timestamp
+    run_dir.mkdir(parents=True, exist_ok=True)
     checkpt_dir = run_dir / "checkpoints"
     checkpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -308,10 +332,8 @@ def main():
     log_file = log_path.open("w", newline="")
     log_writer = csv.writer(log_file)
     log_writer.writerow(["model", "origin", "epoch", "split",
-        "loss", "acc", "prec", "rec", "spec", "f1", "ppv", "npv",
-        "lr", "seconds"]
-        )
-    log_file.flush()
+                         "loss", "acc", "prec", "rec", "spec", "f1", "ppv", "npv",
+                         "lr", "seconds","split"])
 
     # Scan the SiPaKMeD dataset and build a fold-annotated DataFrame
     dataset_root = DATA_DIR / "sipakmed"
@@ -340,12 +362,21 @@ def main():
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
     for fold_idx, (_, val_idx) in enumerate(skf.split(df, df["binary_idx"])):
         df.loc[val_idx, "fold"] = fold_idx
-        
+    
+
     # Build a class-weighted cross-entropy loss
     
     class_freq = df["binary_idx"].value_counts(normalize=True).sort_index()
-    
-    # Guard against missing classes
+    print(f"Class frequencies: {class_freq.to_dict()}")
+    print(f"Total images found: {len(df)}")
+
+    # Calculate the class frequencies for each split
+    class_freq = df.groupby("fold")["binary_idx"].value_counts(normalize=True).sort_index()
+    print(f"Class frequencies: {class_freq.to_dict()}")
+    print(f"Total images found: {len(df)}")
+
+    class_freq = df["binary_idx"].value_counts(normalize=True).sort_index()
+
     if class_freq.size != 2:
         raise ValueError(f"Both classes required, found: {class_freq.to_dict()}")
 
@@ -364,11 +395,11 @@ def main():
     checkpt_dir.mkdir(parents=True, exist_ok=True)
 
     for friendly_name, backbone_id in TODO.items():
-        print(f"\n> {friendly_name}")
-        try:
+        for split in range(5):    
+            print(f"\n> {friendly_name}")
             # DataLoaders
-            train_df = df[df.fold != 0]
-            val_df   = df[df.fold == 0]
+            train_df = df[df.fold != split]
+            val_df   = df[df.fold == split]
 
             train_loader = DataLoader(
                 SipakBinaryDataset(train_df, train_tf),
@@ -389,6 +420,7 @@ def main():
             model, _, origin = load_any(backbone_id,
                                         num_classes=2,
                                         pretrained=True)
+            print(origin)
             model.to(DEVICE)
 
             optimiser = torch.optim.SGD(model.parameters(),
@@ -402,7 +434,7 @@ def main():
                         "spec": 0.0, "f1": 0.0, "ppv": 0.0, "npv": 0.0}
 
             # Epoch loop
-            for epoch in range(1, 26):
+            for epoch in range(1, EPOCHS + 1):
                 t0 = time.time()
 
                 train_m = _run_epoch(train_loader, model, criterion, optimiser)
@@ -413,12 +445,12 @@ def main():
                 duration = time.time() - t0
 
                 # store results in history_rows
-                for split, m in [("train", train_m), ("val", val_m)]:
+                for split_, m in [("train", train_m), ("val", val_m)]:
                     history_rows.append(OrderedDict(
                         model   = friendly_name,
                         origin  = origin,
                         epoch   = epoch,
-                        split   = split,
+                        split_   = split_,
                         loss    = m["loss"],
                         acc     = m["acc"],
                         prec    = m["prec"],
@@ -429,22 +461,11 @@ def main():
                         npv     = m["npv"],
                         lr      = lr_now,
                         seconds = duration,
+                        split   = split
                     ))
-                    log_writer.writerow([friendly_name,
-                        origin,
-                        epoch,
-                        split,
-                        m["loss"],
-                        m["acc"],
-                        m["prec"],
-                        m["rec"],       # sensitivity
-                        m["spec"],
-                        m["f1"],
-                        m["ppv"],
-                        m["npv"],
-                        lr_now,
-                        duration])
-                    log_file.flush()
+                    log_writer.writerow([friendly_name,origin,epoch,split_,m["loss"],m["acc"],m["prec"],m["rec"], m["spec"],m["f1"],m["ppv"],m["npv"],lr_now,duration,split])
+                
+
                 # checkpoint best by validation accuracy
                 if val_m["acc"] > best_val["acc"]:
                     best_val.update(epoch = epoch,
@@ -456,7 +477,7 @@ def main():
                                     ppv   = val_m["ppv"],
                                     npv   = val_m["npv"])
                     torch.save(model.state_dict(),
-                            checkpt_dir / f"{backbone_id}_best.pt")
+                            checkpt_dir / f"{backbone_id}_best_{split}.pt")
 
                 # console progress every 5 epochs
                 if epoch == 1 or epoch % 5 == 0 or epoch == 25:
@@ -474,29 +495,25 @@ def main():
             row_summary = [
                 friendly_name, best_val["epoch"], best_val["acc"],
                 best_val["prec"], best_val["rec"], best_val["spec"],
-                best_val["f1"],   best_val["ppv"], best_val["npv"],
+                best_val["f1"],   best_val["ppv"], best_val["npv"], split
                 ]        
                 
             summary_rows.append(row_summary)
-            cols = ["model", "best_epoch", "best_acc",
-                "best_prec", "best_rec", "best_spec",
-                "best_f1", "best_ppv", "best_npv"]
-
-            pd.DataFrame([row_summary], columns=cols).to_csv(
+            print(row_summary)
+            print(summary_path)
+            print(summary_rows)
+            pd.DataFrame(summary_rows).to_csv(
                 summary_path,
-                index=False,
-                mode="a",
-                header=not summary_path.exists()    
+                header= ["model", "best_epoch", "best_acc", "best_prec",
+                        "best_rec", "best_spec", "best_f1",
+                        "best_ppv", "best_npv","split"],
             )
-            
-        except Exception as exc:
-            warnings.warn(f"{friendly_name} failed: {exc}")
-            summary_rows.append([friendly_name] + [None] * 8)
+            # hygiene: free GPU memory
+            del model, optimiser, scheduler, train_loader, val_loader
+            torch.cuda.empty_cache()
+            gc.collect()
 
-        # hygiene: free GPU memory
-        del model, optimiser, scheduler, train_loader, val_loader
-        torch.cuda.empty_cache()
-        gc.collect()
+            
 
     # Write CSVs
     pd.DataFrame(history_rows).to_csv(
@@ -510,7 +527,7 @@ def main():
     pd.DataFrame(summary_rows,
                 columns=["model", "best_epoch", "best_acc", "best_prec",
                         "best_rec", "best_spec", "best_f1",
-                        "best_ppv", "best_npv"]
+                        "best_ppv", "best_npv","split"]
                 ).to_csv(run_dir / "summary.csv", index=False)
 
 if __name__ == "__main__":
