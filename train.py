@@ -37,18 +37,20 @@ torch.backends.cudnn.deterministic = True; torch.backends.cudnn.benchmark = Fals
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Folders path
-DATA_DIR    = Path(os.getenv("DATA_DIR",    "/workspace/data"))
-METRICS_DIR = Path(os.getenv("METRICS_DIR", "/workspace/metrics"))
-RUNS_DIR    = Path(os.getenv("RUNS_DIR",    "/workspace/runs"))
+DATA_DIR    = Path(os.getenv("DATA_DIR",    ".\\workspace\\data"))
+METRICS_DIR = Path(os.getenv("METRICS_DIR", ".\\workspace\\metrics"))
+RUNS_DIR    = Path(os.getenv("RUNS_DIR",    ".\\workspace\\runs"))
 
 # Models to use
+'''
 TODO = {
     "SqueezeNet 1.1":"tv_squeezenet1_1",
     "MobileNet V2 1.0x":"mobilenetv2_100",
     "ShuffleNet V2 1.0x":"tv_shufflenet_v2_x1_0",
     "GhostNet 1.0x":"ghostnet_100",
-    **{f"EfficientNet-B{i}":f"efficientnet_b{i}" for i in range(9)}
+    **{f"EfficientNet-B{i}":f"efficientnet_b{i}" for i in range(6)}
 }
+'''
 
 # Dataset class
 class SipakBinaryDataset(Dataset):
